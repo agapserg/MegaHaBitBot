@@ -5,6 +5,8 @@ import sqlite3
 from config import API_TOKEN  # Импортируем токен из файла config.py
 import datetime as dt
 from collections import defaultdict
+from collections import Counter
+
 
 
 # Создание экземпляра бота
@@ -31,6 +33,50 @@ emoji_points = {
     "⬜️": 1
 }
 
+@dp.message_handler(commands=['coins'])
+async def handle_coins(message: types.Message):
+    user_id = message.from_user.id
+    coin_count = fetch_coin_count(user_id)
+    if coin_count:
+        reply_message = "Ваше богатство на данный момент:\n" + coin_count
+    else:
+        reply_message = "Не удалось получить информацию о ваших ХэБитКоинах."
+    await message.reply(reply_message)
+
+def fetch_coin_count(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""SELECT sleep, veg, alco, smok, fit FROM b_stats
+                     WHERE tg_user_id=?""", (user_id,))
+        rows = c.fetchall()
+
+        if not rows:
+            return None
+
+        all_emojis = [emoji for row in rows for emoji in row if emoji]
+        emoji_count = Counter(all_emojis)
+        sorted_emoji_count = sorted(emoji_count.items(), key=lambda x: x[1], reverse=True)
+
+        message_lines = []
+        for emoji, count in sorted_emoji_count:
+            color_name = emoji_to_color(emoji)
+            message_lines.append(f"{count} - {emoji} - {color_name} ХэБитКоинов")
+
+        return "\n".join(message_lines)
+
+def emoji_to_color(emoji):
+    color_map = {
+        '🟩': 'Зелёных',
+        '🟨': 'Жёлтых',
+        '🟧': 'Оранжевых',
+        '🟥': 'Красных',
+        '🟫': 'Коричневых',
+        '⬛️': 'Чёрных',
+        '🟪': 'Фиолетовых',
+        '🟦': 'Синих',
+        '⬜️': 'Белых'
+    }
+    return color_map.get(emoji, 'Неизвестных')
 
 async def handle_veg_command(message: types.Message):
     user_id = message.from_user.id
