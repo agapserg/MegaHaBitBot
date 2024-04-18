@@ -296,15 +296,19 @@ def get_vegetables_by_attribute(attribute, value):
     return c.fetchall()
 
 def update_veg_name_in_stats(user_id, vegetable_name):
-    c.execute("SELECT name_veg FROM b_stats WHERE tg_user_id=?", (user_id,))
+    today_date = dt.datetime.now().strftime('%Y-%m-%d')
+    c.execute("SELECT name_veg FROM b_stats WHERE tg_user_id=? AND date=?", (user_id, today_date))
     result = c.fetchone()
     if result:
         existing_vegs = result[0] if result[0] else ""
         veg_list = existing_vegs.split(', ')
         if vegetable_name not in veg_list:
             new_veg_list = ', '.join(veg_list + [vegetable_name]) if existing_vegs else vegetable_name
-            c.execute("UPDATE b_stats SET name_veg=? WHERE tg_user_id=?", (new_veg_list, user_id))
-            conn.commit()
+            c.execute("UPDATE b_stats SET name_veg=? WHERE tg_user_id=? AND date=?", (new_veg_list, user_id, today_date))
+    else:
+        c.execute("INSERT INTO b_stats (date, tg_user_id, name_veg) VALUES (?, ?, ?)", (today_date, user_id, vegetable_name))
+    conn.commit()
+
 
 # Обработчик кнопок "Овощи по цвету" и "Овощи по группе"
 @dp.callback_query_handler(lambda c: c.data in ['by_color', 'by_group'])
