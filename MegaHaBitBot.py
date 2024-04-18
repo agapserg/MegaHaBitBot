@@ -32,6 +32,149 @@ emoji_points = {
 }
 
 
+async def handle_veg_command(message: types.Message):
+    user_id = message.from_user.id
+    consumed_veg = fetch_user_vegetables(user_id)
+    all_veg_info = fetch_all_vegetables_info()
+    report = generate_vegetable_report(consumed_veg, all_veg_info)
+    await message.reply(report)
+
+def fetch_user_vegetables(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT name_veg FROM b_stats WHERE tg_user_id=?", (user_id,))
+        veg_entries = c.fetchall()
+    # Преобразуем список кортежей в список овощей
+    consumed_veg = set()
+    for entry in veg_entries:
+        if entry[0]:
+            consumed_veg.update(entry[0].split(', '))
+    return consumed_veg
+
+def fetch_all_vegetables_info():
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT name, grp, clr FROM c_veg_frut")
+        return c.fetchall()
+
+def generate_vegetable_report(consumed_veg, all_veg_info):
+    veg_by_group = {}
+    veg_by_color = {}
+    # Инициализация словарей
+    for name, group, color in all_veg_info:
+        if group not in veg_by_group:
+            veg_by_group[group] = {"consumed": [], "not_consumed": []}
+        if color not in veg_by_color:
+            veg_by_color[color] = {"consumed": [], "not_consumed": []}
+        # Наполнение словарей данными
+        if name in consumed_veg:
+            veg_by_group[group]['consumed'].append(name)
+            veg_by_color[color]['consumed'].append(name)
+        else:
+            veg_by_group[group]['not_consumed'].append(name)
+            veg_by_color[color]['not_consumed'].append(name)
+
+    report_lines = ["Вы отметили следующие овощи!\n"]
+    # Формирование отчёта по группам
+    for group, items in veg_by_group.items():
+        if items['consumed']:
+            report_lines.append(f"\n{group}:")
+            for veg in items['consumed']:
+                report_lines.append(f"✅ {veg}")
+            for veg in items['not_consumed']:
+                report_lines.append(f"❌ {veg}")
+
+    # Формирование отчёта по цветам
+    for color, items in veg_by_color.items():
+        if items['consumed']:
+            report_lines.append(f"\n{color}:")
+            for veg in items['consumed']:
+                report_lines.append(f"✅ {veg}")
+            for veg in items['not_consumed']:
+                report_lines.append(f"❌ {veg}")
+
+    # Подготовка информации о неотмеченных группах и цветах
+    not_marked_groups = [group for group, items in veg_by_group.items() if not items['consumed']]
+    not_marked_colors = [color for color, items in veg_by_color.items() if not items['consumed']]
+
+    if not_marked_groups:
+        report_lines.append("\nВы не отмечали овощи из следующих групп: " + ", ".join(not_marked_groups))
+    if not_marked_colors:
+        report_lines.append("Вы не отмечали овощи следующих цветов: " + ", ".join(not_marked_colors))
+
+    return "\n".join(report_lines)
+
+# Хендлер для команды /veg
+@dp.message_handler(commands=['veg'])
+async def veg_handler(message: types.Message):
+    await handle_veg_command(message)
+
+from datetime import datetime
+
+def fetch_report(user_id, start_date, end_date):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        # Получение данных за каждый день в заданном интервале
+        c.execute("""SELECT date, sleep, veg, alco, smok, fit FROM b_stats 
+                     WHERE date BETWEEN ? AND ? AND tg_user_id=? ORDER BY date DESC""",
+                  (start_date, end_date, user_id))
+        rows = c.fetchall()
+
+        if rows:
+            # Эмодзи для каждой активности
+            emojis = {
+                "sleep": "💤",
+                "veg": "🍅",
+                "alco": "🍺",
+                "smok": "🚬",
+                "fit": "💪"
+            }
+            # Шапка таблицы с активностями
+            header = ''.join(emojis.values()) + "< Активности"
+
+            # Формирование данных по дням
+            daily_lines = []
+            for row in rows:
+                date = row[0]
+                # Формирование строки с эмодзи для каждой активности за день
+                daily_emojis = [value if value else '❌' for value in row[1:]]
+                # Сборка строки за день
+                daily_line = ''.join(daily_emojis) + f" - {date}"
+                daily_lines.append(daily_line)
+
+            # Сборка итогового сообщения
+            return f"{header}\n" + "\n".join(daily_lines)
+        else:
+            return "За указанный период активностей не зачекинено."        
+
+# Хендлеры для разных команд
+@dp.message_handler(commands=['td'])
+async def handle_today(message: types.Message):
+    today = datetime.now().strftime('%Y-%m-%d')
+    report = fetch_report(message.from_user.id, today, today)
+    await message.reply(report)
+
+@dp.message_handler(commands=['yt'])
+async def handle_yesterday(message: types.Message):
+    yesterday = (datetime.now() - dt.timedelta(days=1)).strftime('%Y-%m-%d')
+    report = fetch_report(message.from_user.id, yesterday, yesterday)
+    await message.reply(report)
+
+@dp.message_handler(commands=['7d'])
+async def handle_last_7_days(message: types.Message):
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - dt.timedelta(days=6)).strftime('%Y-%m-%d')
+    report = fetch_report(message.from_user.id, start_date, end_date)
+    await message.reply(report)
+
+@dp.message_handler(commands=['30d'])
+async def handle_last_30_days(message: types.Message):
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - dt.timedelta(days=29)).strftime('%Y-%m-%d')
+    report = fetch_report(message.from_user.id, start_date, end_date)
+    await message.reply(report)
+
+
 # Функция для записи/обновления данных пользователя в таблице a_users
 def add_user_to_db(user_id, first_name, last_name, tg_nick):
     c.execute("SELECT * FROM a_users WHERE tg_user_id=?", (user_id,))
@@ -136,6 +279,66 @@ def update_or_insert_vegetable_data(user_id, vegetable_emoji):
     
     conn.commit()
 
+# Функции для работы с базой данных
+def get_unique_values(column):
+    c.execute(f"SELECT DISTINCT {column} FROM c_veg_frut")
+    return c.fetchall()
+
+def get_vegetables_by_attribute(attribute, value):
+    # Проверка, что имя атрибута является допустимым именем столбца
+    valid_attributes = {'clr', 'grp', 'name'}
+    if attribute not in valid_attributes:
+        raise ValueError(f"Invalid attribute name: {attribute}")
+
+    # Формирование безопасного SQL запроса
+    query = f"SELECT name FROM c_veg_frut WHERE {attribute}=?"
+    c.execute(query, (value,))
+    return c.fetchall()
+
+def update_veg_name_in_stats(user_id, vegetable_name):
+    c.execute("SELECT name_veg FROM b_stats WHERE tg_user_id=?", (user_id,))
+    result = c.fetchone()
+    if result:
+        existing_vegs = result[0] if result[0] else ""
+        veg_list = existing_vegs.split(', ')
+        if vegetable_name not in veg_list:
+            new_veg_list = ', '.join(veg_list + [vegetable_name]) if existing_vegs else vegetable_name
+            c.execute("UPDATE b_stats SET name_veg=? WHERE tg_user_id=?", (new_veg_list, user_id))
+            conn.commit()
+
+# Обработчик кнопок "Овощи по цвету" и "Овощи по группе"
+@dp.callback_query_handler(lambda c: c.data in ['by_color', 'by_group'])
+async def handle_veg_by_attribute(callback_query: types.CallbackQuery):
+    attribute = 'clr' if callback_query.data == 'by_color' else 'grp'
+    values = get_unique_values(attribute)
+    keyboard = types.InlineKeyboardMarkup()
+    for value in values:
+        keyboard.add(types.InlineKeyboardButton(value[0], callback_data=f"attr:{attribute}:{value[0]}"))
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, "Выберите категорию: ", reply_markup=keyboard)
+
+
+# Обработчик для выбора цвета или группы
+@dp.callback_query_handler(lambda c: c.data.startswith('attr:'))
+async def handle_color_or_group_selection(callback_query: types.CallbackQuery):
+    _, attribute, value = callback_query.data.split(':')
+    vegetables = get_vegetables_by_attribute(attribute, value)
+    keyboard = types.InlineKeyboardMarkup()
+    for vegetable in vegetables:
+        keyboard.add(types.InlineKeyboardButton(vegetable[0], callback_data=f"select:{vegetable[0]}"))
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, "Выберите овощ: ", reply_markup=keyboard)
+
+# Обработчик выбора конкретного овоща
+@dp.callback_query_handler(lambda c: c.data.startswith('select:'))
+async def handle_final_veg_selection(callback_query: types.CallbackQuery):
+    vegetable_name = callback_query.data.split(':')[1]
+    user_id = callback_query.from_user.id
+    update_veg_name_in_stats(user_id, vegetable_name)
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, f"Овощ '{vegetable_name}' добавлен в ваш список.")
+
+
 # Обработчик выбора "Овощи"
 @dp.callback_query_handler(lambda c: c.data == 'vegetables')
 async def handle_vegetables(callback_query: types.CallbackQuery):
@@ -146,6 +349,8 @@ async def handle_vegetables(callback_query: types.CallbackQuery):
         types.InlineKeyboardButton("🟧(3 овоща)", callback_data="3"),
         types.InlineKeyboardButton("🟥(2 овоща)", callback_data="2"),
         types.InlineKeyboardButton("🟫(1 овощ)", callback_data="1"),
+        types.InlineKeyboardButton("Овощи по цвету", callback_data="by_color"),
+        types.InlineKeyboardButton("Овощи по группе", callback_data="by_group"),
     ]
     for button in veg_buttons:
         keyboard.add(button)  # Добавляем каждую кнопку на отдельной строке
@@ -304,14 +509,14 @@ async def handle_fitness_level(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(callback_query.from_user.id, f"Уровень физической активности {fitness_emoji} зафиксирован.")
 
-# Хендлер для команды /toptop
-@dp.message_handler(commands=['toptop'])
-async def handle_toptop(message: types.Message):
-    top_scores = calculate_top_scores()
-    result_message = "🏆 Top Users by Activity Points:\n\n"
-    for rank, (user_id, points) in enumerate(top_scores, start=1):
-        result_message += f"{rank}. User {user_id}: {points} points\n"
-    await message.reply(result_message)
+# # Хендлер для команды /toptop
+# @dp.message_handler(commands=['toptop'])
+# async def handle_toptop(message: types.Message):
+#     top_scores = calculate_top_scores()
+#     result_message = "🏆 Top Users by Activity Points:\n\n"
+#     for rank, (user_id, points) in enumerate(top_scores, start=1):
+#         result_message += f"{rank}. User {user_id}: {points} points\n"
+#     await message.reply(result_message)
 
 # Функция для подсчета очков и формирования списка топ пользователей
 def calculate_top_scores():

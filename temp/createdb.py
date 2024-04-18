@@ -25,6 +25,12 @@ def create_database():
                 fit TEXT
                 )''')
 
+    # Проверка и добавление столбца name_frut если он отсутствует
+    c.execute("PRAGMA table_info(b_stats)")
+    columns = [info[1] for info in c.fetchall()]
+    if "name_veg" not in columns:
+        c.execute("ALTER TABLE b_stats ADD COLUMN name_veg TEXT")
+
     # Сохранение изменений и закрытие соединения
     conn.commit()
     conn.close()
